@@ -1,27 +1,89 @@
-use std::{fmt::Debug, net::Ipv4Addr, str::FromStr};
-
-use jiff::civil::date;
+use std::{
+    backtrace::Backtrace,
+    fmt::Debug,
+    net::{AddrParseError, Ipv4Addr},
+    num::ParseIntError,
+    str::{Chars, FromStr},
+};
 
 use crate::logitem::{LogItem, Status};
+use jiff::civil::date;
+use thiserror::Error;
 
-fn split_map<T>(inp: &str, sep: char) -> Vec<T>
+fn split_map<T>(inp: &str, sep: char) -> Result<Vec<T>, LogItemParseErr>
 where
-    T: FromStr,
-    T::Err: Debug,
+    T: FromStr<Err = ParseIntError>,
 {
-    inp.split(sep).map(|s| s.parse::<T>().unwrap()).collect()
+    inp.split(sep).map(|s| Ok(s.parse::<T>()?)).collect()
 }
 
-#[derive(Debug)]
-pub enum LogItemParseErr {}
+#[derive(Error, Debug)]
+pub enum LogItemParseErr {
+    #[error("The input was malformed")]
+    InputInvalid,
+
+    #[error("Status `{0}` is invalid, expected 'started', 'finished', or 'aborted'")]
+    InvalidStatus(String),
+
+    #[error("Input unexpectedly terminated")]
+    UnexpctedEof,
+
+    #[error("Error parsing IP address: {0:?}")]
+    Ipv4ParseErr(#[from] AddrParseError),
+
+    #[error("Error parsing port: {0:?}")]
+    PortParseError(#[from] ParseIntError),
+}
+
+pub struct LogParseErr(LogItemParseErr, Backtrace);
+
+impl Debug for LogParseErr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        writeln!(f, "{:?}", self.0)?;
+        writeln!(f, "{}", self.1)
+    }
+}
+
+impl From<LogItemParseErr> for LogParseErr {
+    fn from(value: LogItemParseErr) -> Self {
+        LogParseErr(value, Backtrace::capture())
+    }
+}
+
+fn parse_con<'a>(mut iter: &mut Chars<'a>) -> Result<Option<(Ipv4Addr, u16)>, LogItemParseErr> {
+    let l = iter.nth(12).ok_or(LogItemParseErr::UnexpctedEof)?;
+
+    let conn = if l == '(' {
+        let _ = iter.next().ok_or(LogItemParseErr::UnexpctedEof)?;
+
+        let ip = (&mut iter)
+            .take_while(|c| *c != '\'')
+            .collect::<Box<str>>()
+            .parse::<Ipv4Addr>()?;
+
+        let _ = iter.nth(1).ok_or(LogItemParseErr::UnexpctedEof)?;
+
+        let port = (&mut iter)
+            .take_while(|e| *e != ')')
+            .collect::<Box<str>>()
+            .parse::<u16>()?;
+
+        Some((ip, port))
+    } else {
+        let _ = iter.nth(4).ok_or(LogItemParseErr::UnexpctedEof)?;
+        None
+    };
+
+    Ok(conn)
+}
 
 impl FromStr for LogItem {
-    type Err = LogItemParseErr;
+    type Err = LogParseErr;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        let date_strs: Vec<i16> = split_map(&s[1..10], '/');
+        let date_strs: Vec<i16> = split_map(&s[1..10], '/')?;
 
-        let time_strs: Vec<i8> = split_map(&s[11..19], ':');
+        let time_strs: Vec<i8> = split_map(&s[11..19], ':')?;
 
         let dtime = date(date_strs[2], date_strs[0] as i8, date_strs[1] as i8).at(
             time_strs[0],
@@ -30,83 +92,56 @@ impl FromStr for LogItem {
             0,
         );
 
-        assert_eq!(&s[20..26], "Upload");
-
-        let mut iter = s[27..].chars();
-        let start = 27;
-        let mut end = start;
-
-        for c in &mut iter {
-            if c == ':' {
-                break;
-            }
-
-            end += 1;
+        if &s[20..26] != "Upload" {
+            return Err(LogItemParseErr::InputInvalid.into());
         }
 
-        let status = match &s[start..end] {
+        let mut iter = s[27..].chars();
+
+        let mut skip_ip = false;
+        let status = (&mut iter).take_while(|e| {
+            if *e == ',' {
+                skip_ip = true
+            }
+            *e != ':' && *e != ','
+        });
+
+
+        // TODO: would benefit from deref patterns
+        let status = match &*status.collect::<Box<str>>() {
             "started" => Status::Started,
             "finished" => Status::Finished,
             "aborted" => Status::Aborted,
 
-            // TODO: proper error
-            _ => panic!(),
+            invalid => Err(LogItemParseErr::InvalidStatus(invalid.to_owned()))?,
         };
+        dbg!(skip_ip);
 
-        let _ = iter.nth(6).unwrap();
+        let _ = iter.nth(5).ok_or(LogItemParseErr::UnexpctedEof)?;
 
-        let start = end + 7;
-        let mut end = start;
-
-        for c in &mut iter {
-            if c == ',' {
-                break;
-            }
-
-            end += 1;
-        }
-
-        let user = s[start..end].to_owned();
-
-        let l = iter.nth(12).unwrap();
-        let start = end + 16;
-        let mut end = start;
-
-        let conn = if l == '(' {
-            let _ = iter.next().unwrap();
-
-            for c in &mut iter {
-                if c == '\'' {
-                    break;
+        let user = (&mut iter)
+            .take_while(|e| {
+                if skip_ip {
+                    *e != ' '
                 }
-
-                end += 1;
-            }
-
-            let ip = s[start..end].parse::<Ipv4Addr>().unwrap();
-
-            let start = end + 3;
-            end = start;
-
-            for c in &mut iter {
-                if c == ')' {
-                    break;
+                else {
+                    *e != ','
                 }
+            })
+            .collect::<Box<str>>();
 
-                end += 1;
-            }
-
-            let port = s[start..end - 2].parse().unwrap();
-
-            Some((ip, port))
+        let conn = if !skip_ip {
+            parse_con(&mut iter)?
         } else {
-            let _ = iter.nth(4).unwrap();
             None
         };
 
-        let len_skipped = (&mut iter).take_while(|c| *c != ' ').count();
+        let _ = (&mut iter).take_while(|c| *c != ' ').count();
+        if !skip_ip {
+            let _ = iter.nth(4).unwrap();
+        }
 
-        let file = s[end + len_skipped + 5..].to_owned();
+        let file = iter.collect::<Box<str>>();
 
         Ok(LogItem {
             time: dtime,

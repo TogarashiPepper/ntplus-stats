@@ -13,8 +13,8 @@ pub struct LogItem {
     pub time: DateTime,
     pub status: Status,
     pub conn: Option<(Ipv4Addr, u16)>,
-    pub user: String,
-    pub file: String,
+    pub user: Box<str>,
+    pub file: Box<str>,
 }
 
 impl Debug for LogItem {
