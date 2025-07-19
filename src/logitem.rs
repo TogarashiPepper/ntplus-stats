@@ -2,7 +2,7 @@ use std::{fmt::Debug, net::Ipv4Addr};
 
 use jiff::civil::DateTime;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 pub enum Status {
     Started,
     Finished,

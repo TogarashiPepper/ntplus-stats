@@ -106,7 +106,6 @@ impl FromStr for LogItem {
             *e != ':' && *e != ','
         });
 
-
         // TODO: would benefit from deref patterns
         let status = match &*status.collect::<Box<str>>() {
             "started" => Status::Started,
@@ -119,14 +118,7 @@ impl FromStr for LogItem {
         let _ = iter.nth(5).ok_or(LogItemParseErr::UnexpctedEof)?;
 
         let user = (&mut iter)
-            .take_while(|e| {
-                if skip_ip {
-                    *e != ' '
-                }
-                else {
-                    *e != ','
-                }
-            })
+            .take_while(|e| if skip_ip { *e != ' ' } else { *e != ',' })
             .collect::<Box<str>>();
 
         let conn = if !skip_ip {
@@ -135,10 +127,11 @@ impl FromStr for LogItem {
             None
         };
 
-        let _ = (&mut iter).take_while(|c| *c != ' ').count();
-        if !skip_ip {
-            let _ = iter.nth(4).unwrap();
+        if conn.is_some() {
+            let _ = iter.nth(4).ok_or(LogItemParseErr::UnexpctedEof)?;
         }
+
+        let _ = (&mut iter).take_while(|c| *c != ' ').count();
 
         let file = iter.collect::<Box<str>>();
 
