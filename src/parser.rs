@@ -115,7 +115,6 @@ impl FromStr for LogItem {
 
             invalid => Err(LogItemParseErr::InvalidStatus(invalid.to_owned()))?,
         };
-        dbg!(skip_ip);
 
         let _ = iter.nth(5).ok_or(LogItemParseErr::UnexpctedEof)?;
 
