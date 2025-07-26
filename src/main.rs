@@ -1,3 +1,9 @@
+// TODO: visalization w/web ui w/axum
+// TODO: parallelize parsing log files
+// TODO: parallelize reading log files
+// TODO: parallelize reading music files
+// TODO: async IO perhaps
+
 mod logitem;
 mod metadata;
 mod parser;
