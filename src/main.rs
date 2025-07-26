@@ -1,10 +1,16 @@
 mod logitem;
+mod metadata;
 mod parser;
 
-use std::{collections::HashMap, fs};
+use std::{collections::HashMap, fs, io::stdin, path::PathBuf};
 
 use logitem::{LogItem, Status};
+use metadata::get_meta;
 use parser::LogParseErr;
+
+fn clear() {
+    print!("\x1B[2J\x1B[1;1H");
+}
 
 fn main() {
     let mut data: HashMap<String, Vec<LogItem>> = HashMap::new();
@@ -37,14 +43,26 @@ fn main() {
         let log_items: Result<Vec<LogItem>, LogParseErr> = content
             .lines()
             .filter_map(|line| {
-                let item = line.parse::<LogItem>();
-                if let Ok(item) = &item
-                    && item.status != Status::Finished
+                let item = match line.parse::<LogItem>() {
+                    Ok(item) => item,
+                    Err(err) => return Some(Err(err)),
+                };
+
+                if item.status != Status::Finished
+                    || (item.file.ends_with(".jpg")
+                        || item.file.ends_with(".jpeg")
+                        || item.file.ends_with(".txt")
+                        || item.file.ends_with(".cue")
+                        || item.file.ends_with(".lrc")
+                        || item.file.ends_with(".log")
+                        || item.file.ends_with(".png")
+                        || item.file.ends_with(".m3u")
+                        || item.file.ends_with(".wav"))
                 {
                     return None;
                 }
 
-                Some(item)
+                Some(Ok(item))
             })
             .collect();
 
@@ -56,24 +74,39 @@ fn main() {
     for (_k, v) in data {
         for mut item in v {
             if let Some(x) = item.file.strip_prefix("downloads\\") {
-                item.file = x.into();
+                item.file = format!("music/{x}").into();
             }
-            if let Some(x) = item.file.strip_prefix("music\\") {
-                item.file = x.into();
-            }
+            // if let Some(x) = item.file.strip_prefix("music\\") {
+            //     item.file = x.into();
+            // }
 
             freq_map
                 .entry(item.file)
                 .and_modify(|e| *e += 1)
-                .or_insert(0);
+                .or_insert(1);
         }
     }
 
+    // TODO: filter files that dont exist
     let mut map: Vec<(Box<str>, usize)> = Vec::from_iter(freq_map);
 
     map.sort_by(|&(_, a), &(_, b)| a.cmp(&b));
 
-    for x in map {
-        println!("{}: {}", x.0, x.1);
+    let mut void = String::new();
+    let stdin = stdin();
+
+    clear();
+
+    for elem in map.into_iter().rev() {
+        let mut path = PathBuf::from("/Volumes/OrangDrive/");
+        path.extend(elem.0.split('\\'));
+
+        if path.exists() {
+            let d = get_meta(path);
+            println!("{d}");
+
+            // stdin.read_line(&mut void).unwrap();
+            // clear();
+        }
     }
 }
